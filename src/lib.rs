@@ -1,6 +1,8 @@
 #![no_std]
+use core::mem::size_of;
 use embedded_hal::blocking::delay::DelayMs;
 use embedded_hal::digital::v2::{InputPin, OutputPin};
+const BUF_SIZE: usize = 8;
 
 macro_rules! io_err {
     ( $i : expr ) => {
@@ -161,6 +163,22 @@ where
 
         return Ok(pin);
     }
+
+    pub fn get<T>(&mut self, delay: &mut impl DelayMs<u8>) -> Result<T, Error>
+    where
+        T: Copy,
+    {
+        let mut buf = [0u8; BUF_SIZE];
+        let size = size_of::<T>();
+
+        for i in 0..size {
+            buf[i] = self.read(delay)?;
+        }
+
+        let tmp = unsafe { &*(buf[0..size].as_ptr() as *const T) };
+
+        return Ok(*tmp);
+    }
 }
 
 pub struct EdgeDetector<T> {
@@ -202,4 +220,3 @@ where
         return self.pin.is_high();
     }
 }
-
