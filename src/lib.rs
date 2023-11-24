@@ -25,8 +25,8 @@ pub trait ReadWrite {
 
 pub struct HalfDuplexWire<F2, F1, I, O>
 where
-    F1: Fn(O) -> I,
-    F2: Fn(I) -> O,
+    F1: FnMut(O) -> I,
+    F2: FnMut(I) -> O,
     I: InputPin,
     O: OutputPin,
 {
