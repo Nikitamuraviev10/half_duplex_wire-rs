@@ -18,44 +18,62 @@ pub enum Error {
     NoResponse,
 }
 
-pub trait ReadWrite {
-    fn write(&mut self, data: u8, delay: &mut impl DelayMs<u8>) -> Result<(), Error>;
-    fn read(&mut self, delay: &mut impl DelayMs<u8>) -> Result<u8, Error>;
+impl Error {
+    pub fn as_str<'a>(self) -> &'a str {
+        match self {
+            Self::IO => "io",
+            Self::Busy => "busy",
+            Self::NoResponse => "no response",
+            Self::Unavailable => "unavailable",
+        }
+    }
 }
 
-pub struct HalfDuplexWire<F2, F1, I, O>
+// pub trait ReadWrite {
+// fn write(&mut self, data: u8, delay: &mut impl DelayMs<u8>) -> Result<(), Error>;
+// fn read(&mut self, delay: &mut impl DelayMs<u8>) -> Result<u8, Error>;
+// }
+
+pub struct HalfDuplexWire<F2, F1, I, O, T>
 where
-    F1: FnMut(O) -> I,
-    F2: FnMut(I) -> O,
+    F1: Fn(O) -> I,
+    F2: Fn(I) -> O,
     I: InputPin,
     O: OutputPin,
 {
     pin: Option<I>,
     into_input: F1,
     into_output: F2,
-    delay: u8,
+    delay: T,
 }
 
-impl<F2, F1, I, O> ReadWrite for HalfDuplexWire<F2, F1, I, O>
+// impl<F2, F1, I, O, T> ReadWrite for HalfDuplexWire<F2, F1, I, O, T>
+impl<F2, F1, I, O, T> HalfDuplexWire<F2, F1, I, O, T>
 where
-    F1: FnMut(O) -> I,
-    F2: FnMut(I) -> O,
+    F1: Fn(O) -> I,
+    F2: Fn(I) -> O,
     I: InputPin,
     O: OutputPin,
+    T: Copy,
 {
-    fn write(&mut self, data: u8, delay: &mut impl DelayMs<u8>) -> Result<(), Error> {
+    fn bring_back_pin(&mut self, pin: I) {
+        self.pin = Some(pin);
+    }
+    pub fn write(&mut self, data: u8, delay: &mut impl DelayMs<T>) -> Result<(), Error> {
         let pin = match self.pin.take() {
             Some(s) => s,
             None => return Err(Error::Unavailable),
         };
 
         if io_err!(pin.is_low())? {
+            self.bring_back_pin(pin);
             return Err(Error::Busy);
         }
 
         self.skip_phase(delay, 4);
 
         if io_err!(pin.is_low())? {
+            self.bring_back_pin(pin);
             return Err(Error::Busy);
         }
 
@@ -83,11 +101,11 @@ where
         }
 
         let pin = (self.into_input)(pin);
-        self.pin = Some(pin);
+        self.bring_back_pin(pin);
         return Ok(());
     }
 
-    fn read(&mut self, delay: &mut impl DelayMs<u8>) -> Result<u8, Error> {
+    pub fn read(&mut self, delay: &mut impl DelayMs<T>) -> Result<u8, Error> {
         let pin = match self.pin.take() {
             Some(s) => s,
             None => return Err(Error::Unavailable),
@@ -119,14 +137,15 @@ where
     }
 }
 
-impl<F2, F1, I, O> HalfDuplexWire<F2, F1, I, O>
+impl<F2, F1, I, O, T> HalfDuplexWire<F2, F1, I, O, T>
 where
-    F1: FnMut(O) -> I,
-    F2: FnMut(I) -> O,
+    F1: Fn(O) -> I,
+    F2: Fn(I) -> O,
     I: InputPin,
     O: OutputPin,
+    T: Copy,
 {
-    pub fn new(pin: I, into_output: F2, into_input: F1, delay: u8) -> Self {
+    pub fn new(pin: I, into_output: F2, into_input: F1, delay: T) -> Self {
         HalfDuplexWire {
             pin: Some(pin),
             into_input: into_input,
@@ -135,13 +154,13 @@ where
         }
     }
 
-    pub fn skip_phase(&mut self, delay: &mut impl DelayMs<u8>, n: u8) {
+    pub fn skip_phase(&mut self, delay: &mut impl DelayMs<T>, n: u8) {
         for _ in 0..n {
             delay.delay_ms(self.delay);
         }
     }
 
-    pub fn stream_request(&mut self, delay: &mut impl DelayMs<u8>) -> Result<(), Error> {
+    pub fn stream_request(&mut self, delay: &mut impl DelayMs<T>) -> Result<(), Error> {
         if let Some(pin) = &self.pin {
             if io_err!(pin.is_high())? {
                 delay.delay_ms(self.delay);
@@ -164,18 +183,18 @@ where
         return Ok(pin);
     }
 
-    pub fn get<T>(&mut self, delay: &mut impl DelayMs<u8>) -> Result<T, Error>
+    pub fn get<U>(&mut self, delay: &mut impl DelayMs<T>) -> Result<U, Error>
     where
-        T: Copy,
+        U: Copy,
     {
         let mut buf = [0u8; BUF_SIZE];
-        let size = size_of::<T>();
+        let size = size_of::<U>();
 
         for i in 0..size {
             buf[i] = self.read(delay)?;
         }
 
-        let tmp = unsafe { &*(buf[0..size].as_ptr() as *const T) };
+        let tmp = unsafe { &*(buf[0..size].as_ptr() as *const U) };
 
         return Ok(*tmp);
     }
